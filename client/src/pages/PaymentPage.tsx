@@ -9,6 +9,12 @@ import { Loader2, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { formatCurrency } from "@/lib/utils";
 
+declare global {
+  interface Window {
+    Razorpay: any;
+  }
+}
+
 export default function PaymentPage() {
   const [, params] = useLocation();
   const slug = (params as any)?.slug;
@@ -50,29 +56,97 @@ export default function PaymentPage() {
 
   const handlePayment = async () => {
     // Validate inputs
-    if (!page.contactFields.includes("email") && !email.trim()) {
-      // Email not required
-    } else if (page.contactFields.includes("email") && !email.trim()) {
+    if (page.contactFields.includes("email") && !email.trim()) {
       toast.error("Please enter your email");
       return;
     }
 
-    if (!page.contactFields.includes("phone") && !phone.trim()) {
-      // Phone not required
-    } else if (page.contactFields.includes("phone") && !phone.trim()) {
+    if (page.contactFields.includes("phone") && !phone.trim()) {
       toast.error("Please enter your phone number");
       return;
     }
 
     setIsProcessing(true);
     try {
-      // In a real implementation, this would call a tRPC procedure to create an order
-      // and then open Razorpay checkout
-      toast.success("Payment initiated! (Demo mode)");
-      // TODO: Integrate with Razorpay checkout
+      // Create Razorpay order via API
+      const orderResponse = await fetch("/api/razorpay/create-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pageId: page.id,
+          email,
+          phone,
+          amount: page.amount,
+          isRecurring: page.isRecurring,
+        }),
+      });
+
+      if (!orderResponse.ok) {
+        const errorData = await orderResponse.json();
+        throw new Error(errorData.error || "Failed to create payment order");
+      }
+
+      const { orderId, keyId } = await orderResponse.json();
+
+      // Open Razorpay checkout
+      const options = {
+        key: keyId,
+        amount: page.amount,
+        currency: "INR",
+        name: page.productName,
+        description: page.description || "Payment",
+        order_id: orderId,
+        prefill: {
+          email,
+          contact: phone,
+        },
+        handler: async (response: any) => {
+          try {
+            // Verify payment on backend
+            const verifyResponse = await fetch("/api/razorpay/verify-payment", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                orderId,
+                paymentId: response.razorpay_payment_id,
+                signature: response.razorpay_signature,
+                pageId: page.id,
+                email,
+                phone,
+              }),
+            });
+
+            if (!verifyResponse.ok) {
+              const errorData = await verifyResponse.json();
+              throw new Error(errorData.error || "Payment verification failed");
+            }
+
+            toast.success("Payment successful!");
+            // Redirect to success page or dashboard
+            setTimeout(() => {
+              window.location.href = "/dashboard";
+            }, 2000);
+          } catch (error: any) {
+            toast.error(error.message || "Payment verification failed");
+            setIsProcessing(false);
+          }
+        },
+        modal: {
+          ondismiss: () => {
+            setIsProcessing(false);
+            toast.error("Payment cancelled");
+          },
+        },
+      };
+
+      if (!window.Razorpay) {
+        throw new Error("Razorpay script not loaded");
+      }
+
+      const razorpay = new window.Razorpay(options);
+      razorpay.open();
     } catch (error: any) {
       toast.error(error.message || "Payment failed");
-    } finally {
       setIsProcessing(false);
     }
   };
