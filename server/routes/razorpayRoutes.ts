@@ -4,7 +4,7 @@
  */
 
 import { Router, Request, Response } from "express";
-import { createOrder, verifyPaymentSignature, createSubscription } from "../razorpay";
+import { createOrder, verifyWebhookSignature } from "../razorpay";
 import { processWebhook, RazorpayWebhookPayload } from "../webhookHandler";
 import { getDb } from "../db";
 import { transactions, customers, paymentPages } from "../../drizzle/schema";
@@ -122,9 +122,8 @@ router.post("/verify-payment", async (req: Request, res: Response) => {
     }
 
     // Verify Razorpay signature
-    const isValid = verifyPaymentSignature(
-      orderId,
-      paymentId,
+    const isValid = verifyWebhookSignature(
+      `${orderId}|${paymentId}`,
       signature,
       ENV.razorpayKeySecret
     );
@@ -207,10 +206,9 @@ router.post("/webhooks/razorpay", async (req: Request, res: Response) => {
     }
 
     // Verify webhook signature
-    const isValid = verifyPaymentSignature(
+    const isValid = verifyWebhookSignature(
       body,
       signature,
-      "",
       ENV.razorpayKeySecret
     );
 
